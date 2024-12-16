@@ -696,7 +696,12 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                 }
             }
             directory.syncMetaData();
-            final Store.MetadataSnapshot metadataOrEmpty = getMetadata(null);
+            Store.MetadataSnapshot metadataOrEmpty;
+            try {
+                metadataOrEmpty = getMetadata(null);
+            } catch (IndexNotFoundException e) {
+                metadataOrEmpty = MetadataSnapshot.EMPTY;
+            }
             verifyAfterCleanup(sourceMetadata, metadataOrEmpty);
         } finally {
             metadataLock.writeLock().unlock();
@@ -1150,14 +1155,6 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             return count;
         }
 
-        /**
-         * Returns the sync id of the commit point that this MetadataSnapshot represents.
-         *
-         * @return sync id if exists, else null
-         */
-        public String getSyncId() {
-            return commitUserData.get(Engine.SYNC_COMMIT_ID);
-        }
     }
 
     /**
@@ -1220,14 +1217,14 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * mechanism that is used in some repository plugins (S3 for example). However, the checksum is only calculated on
      * the first read. All consecutive reads of the same data are not used to calculate the checksum.
      */
-    static class VerifyingIndexInput extends ChecksumIndexInput {
+    public static class VerifyingIndexInput extends ChecksumIndexInput {
         private final IndexInput input;
         private final Checksum digest;
         private final long checksumPosition;
         private final byte[] checksum = new byte[8];
         private long verifiedPosition = 0;
 
-        VerifyingIndexInput(IndexInput input) {
+        public VerifyingIndexInput(IndexInput input) {
             this(input, new BufferedChecksum(new CRC32()));
         }
 
@@ -1452,6 +1449,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * @see SequenceNumbers#MAX_SEQ_NO
      */
     public void bootstrapNewHistory(long localCheckpoint, long maxSeqNo) throws IOException {
+        assert indexSettings.getIndexMetadata().isSearchableSnapshot() == false;
         metadataLock.writeLock().lock();
         try (IndexWriter writer = newTemporaryAppendingIndexWriter(directory, null)) {
             final Map<String, String> map = new HashMap<>();
@@ -1575,6 +1573,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     }
 
     private IndexWriterConfig newTemporaryIndexWriterConfig() {
+        assert indexSettings.getIndexMetadata().isSearchableSnapshot() == false;
         // this config is only used for temporary IndexWriter instances, used to initialize the index or update the commit data,
         // so we don't want any merges to happen
         var iwc = indexWriterConfigWithNoMerging(null).setSoftDeletesField(Lucene.SOFT_DELETES_FIELD).setCommitOnClose(false);
